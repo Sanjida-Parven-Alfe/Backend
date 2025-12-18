@@ -63,6 +63,17 @@ async function run() {
             })
         }
 
+        const verifyAdmin = async (req, res, next) => {
+            const email = req.decoded.email;
+            const query = { email: email };
+            const user = await userCollection.findOne(query);
+            const isAdmin = user?.role === 'admin';
+            if (!isAdmin) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            next();
+        }
+
         app.post('/create-payment-intent', verifyToken, async (req, res) => {
             const { price } = req.body;
             const amount = parseInt(price * 100);
@@ -116,9 +127,16 @@ async function run() {
             res.send(result);
         });
 
-        app.post('/services', verifyToken, async (req, res) => {
+        app.post('/services', verifyToken, verifyAdmin, async (req, res) => {
             const item = req.body;
             const result = await serviceCollection.insertOne(item);
+            res.send(result);
+        });
+
+        app.delete('/services/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await serviceCollection.deleteOne(query);
             res.send(result);
         });
 
@@ -133,8 +151,15 @@ async function run() {
             res.send(result);
         });
 
-        app.get('/users', verifyToken, async (req, res) => {
+        app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
             const result = await userCollection.find().toArray();
+            res.send(result);
+        });
+
+        app.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await userCollection.deleteOne(query);
             res.send(result);
         });
 
@@ -160,7 +185,7 @@ async function run() {
             res.send(result);
         });
 
-        app.patch('/users/admin/:id', verifyToken, async (req, res) => {
+        app.patch('/users/admin/:id', verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
             const filter = { _id: new ObjectId(id) };
             const updatedDoc = {
@@ -194,12 +219,27 @@ async function run() {
             res.send(result);
         });
 
+        app.patch('/bookings/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const { decoratorName } = req.body;
+            const filter = { _id: new ObjectId(id) };
+            const updatedDoc = {
+                $set: {
+                    status: 'confirmed',
+                    decorator: decoratorName
+                }
+            };
+            const result = await bookingCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
     }
 }
 run().catch(console.dir);
+
 app.get('/', (req, res) => {
     res.send('Style Decor Server is Running')
 })
