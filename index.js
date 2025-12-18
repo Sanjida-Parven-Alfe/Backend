@@ -14,6 +14,7 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Firebase Admin SDK Setup
 if (process.env.FIREBASE_PRIVATE_KEY) {
     const serviceAccount = {
         projectId: process.env.FIREBASE_PROJECT_ID,
@@ -43,12 +44,14 @@ async function run() {
         const userCollection = client.db("styleDecorDB").collection("users");
         const paymentCollection = client.db("styleDecorDB").collection("payments");
 
+        // --- AUTH ROUTES ---
         app.post('/jwt', async (req, res) => {
             const user = req.body;
             const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
             res.send({ token });
         });
 
+        // --- MIDDLEWARES ---
         const verifyToken = (req, res, next) => {
             if (!req.headers.authorization) {
                 return res.status(401).send({ message: 'unauthorized access' });
@@ -74,6 +77,7 @@ async function run() {
             next();
         }
 
+        // --- USER ROUTES ---
         app.post('/users', async (req, res) => {
             const user = req.body;
             const query = { email: user.email };
@@ -131,6 +135,7 @@ async function run() {
             res.send(result);
         });
 
+        // --- SERVICE ROUTES ---
         app.get('/services', async (req, res) => {
             const result = await serviceCollection.find().toArray();
             res.send(result);
@@ -149,6 +154,24 @@ async function run() {
             res.send(result);
         });
 
+        app.patch('/services/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            const updatedService = req.body;
+            const service = {
+                $set: {
+                    service_name: updatedService.service_name,
+                    category: updatedService.category,
+                    cost: updatedService.cost,
+                    unit: updatedService.unit,
+                    description: updatedService.description,
+                    image: updatedService.image
+                }
+            }
+            const result = await serviceCollection.updateOne(filter, service);
+            res.send(result);
+        });
+
         app.delete('/services/:id', verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
@@ -156,6 +179,7 @@ async function run() {
             res.send(result);
         });
 
+        // --- BOOKING ROUTES ---
         app.get('/bookings', verifyToken, async (req, res) => {
             let query = {};
             if (req.query?.email) {
@@ -192,6 +216,7 @@ async function run() {
             res.send(result);
         });
 
+        // --- PAYMENT ROUTES ---
         app.post('/create-payment-intent', verifyToken, async (req, res) => {
             const { price } = req.body;
             const amount = parseInt(price * 100);
@@ -227,6 +252,7 @@ async function run() {
             res.send(result);
         });
 
+        // --- ADMIN STATS (Analytics) ---
         app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
             try {
                 const users = await userCollection.estimatedDocumentCount();
@@ -284,6 +310,51 @@ async function run() {
                 console.error("Admin Stats Error:", error);
                 res.status(500).send({ message: "Internal Server Error in Stats" });
             }
+        });
+
+        // --- DECORATOR ROUTES (NEW) ---
+        
+        // 1. Get assigned bookings by decorator name
+        app.get('/decorator/bookings/:name', verifyToken, async (req, res) => {
+            const name = req.params.name;
+            const query = { decorator: name }; 
+            const result = await bookingCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        // 2. Update Project Status
+        app.patch('/decorator/status/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const { status } = req.body;
+            const filter = { _id: new ObjectId(id) };
+            const updatedDoc = {
+                $set: { status: status }
+            };
+            const result = await bookingCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
+        // 3. Decorator Stats (Earnings & Counts)
+        app.get('/decorator-stats/:name', verifyToken, async (req, res) => {
+            const name = req.params.name;
+            const query = { decorator: name };
+            const bookings = await bookingCollection.find(query).toArray();
+
+            const totalProjects = bookings.length;
+            const completedProjects = bookings.filter(b => b.status === 'Completed').length;
+            
+            // Calculate earnings only for completed projects
+            // Using 'price' field from bookings
+            const earnings = bookings
+                .filter(b => b.status === 'Completed')
+                .reduce((sum, b) => sum + parseFloat(b.price || 0), 0);
+
+            res.send({
+                totalProjects,
+                completedProjects,
+                earnings,
+                bookings 
+            });
         });
 
         await client.db("admin").command({ ping: 1 });
