@@ -11,11 +11,9 @@ const formatPrivateKey = require('./serviceKeyConverter');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Firebase Admin SDK Initialization
 if (process.env.FIREBASE_PRIVATE_KEY) {
     const serviceAccount = {
         projectId: process.env.FIREBASE_PROJECT_ID,
@@ -28,7 +26,6 @@ if (process.env.FIREBASE_PRIVATE_KEY) {
     });
 }
 
-// MongoDB Connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.5scl4km.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -46,14 +43,12 @@ async function run() {
         const userCollection = client.db("styleDecorDB").collection("users");
         const paymentCollection = client.db("styleDecorDB").collection("payments");
 
-        // JWT Generation
         app.post('/jwt', async (req, res) => {
             const user = req.body;
             const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
             res.send({ token });
         });
 
-        // Verify Token Middleware
         const verifyToken = (req, res, next) => {
             if (!req.headers.authorization) {
                 return res.status(401).send({ message: 'unauthorized access' });
@@ -68,7 +63,6 @@ async function run() {
             })
         }
 
-        // Stripe Payment Intent
         app.post('/create-payment-intent', verifyToken, async (req, res) => {
             const { price } = req.body;
             const amount = parseInt(price * 100);
@@ -84,7 +78,6 @@ async function run() {
             });
         });
 
-        // Save Payment Info
         app.post('/payments', verifyToken, async (req, res) => {
             const payment = req.body;
             const insertResult = await paymentCollection.insertOne(payment);
@@ -93,7 +86,8 @@ async function run() {
             const updatedDoc = {
                 $set: {
                     paymentStatus: 'paid',
-                    transactionId: payment.transactionId
+                    transactionId: payment.transactionId,
+                    status: 'confirmed'
                 }
             }
             const updateResult = await bookingCollection.updateOne(query, updatedDoc);
@@ -101,7 +95,6 @@ async function run() {
             res.send({ insertResult, updateResult });
         });
 
-        // Get Payment History
         app.get('/payments/:email', verifyToken, async (req, res) => {
             const query = { email: req.params.email };
             if (req.params.email !== req.decoded.email) {
@@ -111,13 +104,11 @@ async function run() {
             res.send(result);
         });
 
-        // Get All Services
         app.get('/services', async (req, res) => {
             const result = await serviceCollection.find().toArray();
             res.send(result);
         });
 
-        // Get Single Service
         app.get('/services/:id', async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
@@ -125,14 +116,12 @@ async function run() {
             res.send(result);
         });
 
-        // Add Service
         app.post('/services', verifyToken, async (req, res) => {
             const item = req.body;
             const result = await serviceCollection.insertOne(item);
             res.send(result);
         });
 
-        // Create User
         app.post('/users', async (req, res) => {
             const user = req.body;
             const query = { email: user.email };
@@ -144,13 +133,11 @@ async function run() {
             res.send(result);
         });
 
-        // Get All Users
         app.get('/users', verifyToken, async (req, res) => {
             const result = await userCollection.find().toArray();
             res.send(result);
         });
 
-        // Check Admin
         app.get('/users/admin/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
             if (req.decoded.email !== email) {
@@ -162,7 +149,6 @@ async function run() {
             res.send(result);
         });
 
-        // Check Decorator
         app.get('/users/decorator/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
             if (req.decoded.email !== email) {
@@ -174,7 +160,6 @@ async function run() {
             res.send(result);
         });
 
-        // Make Decorator
         app.patch('/users/admin/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const filter = { _id: new ObjectId(id) };
@@ -187,16 +172,12 @@ async function run() {
             res.send(result);
         });
 
-        // BOOKING ROUTES -------------------------------------
-
-        // Create Booking
         app.post('/bookings', async (req, res) => {
             const booking = req.body;
             const result = await bookingCollection.insertOne(booking);
             res.send(result);
         });
 
-        // Get Bookings (Filter by email if provided)
         app.get('/bookings', verifyToken, async (req, res) => {
             let query = {};
             if (req.query?.email) {
@@ -206,14 +187,12 @@ async function run() {
             res.send(result);
         });
 
-        // ---> NEW UPDATED PART: Delete Booking <---
         app.delete('/bookings/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
             const result = await bookingCollection.deleteOne(query);
             res.send(result);
         });
-        // ----------------------------------------------------
 
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
