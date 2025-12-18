@@ -74,72 +74,6 @@ async function run() {
             next();
         }
 
-        app.post('/create-payment-intent', verifyToken, async (req, res) => {
-            const { price } = req.body;
-            const amount = parseInt(price * 100);
-
-            const paymentIntent = await stripe.paymentIntents.create({
-                amount: amount,
-                currency: 'usd',
-                payment_method_types: ['card']
-            });
-
-            res.send({
-                clientSecret: paymentIntent.client_secret
-            });
-        });
-
-        app.post('/payments', verifyToken, async (req, res) => {
-            const payment = req.body;
-            const insertResult = await paymentCollection.insertOne(payment);
-
-            const query = { _id: new ObjectId(payment.bookingId) };
-            const updatedDoc = {
-                $set: {
-                    paymentStatus: 'paid',
-                    transactionId: payment.transactionId,
-                    status: 'confirmed'
-                }
-            }
-            const updateResult = await bookingCollection.updateOne(query, updatedDoc);
-
-            res.send({ insertResult, updateResult });
-        });
-
-        app.get('/payments/:email', verifyToken, async (req, res) => {
-            const query = { email: req.params.email };
-            if (req.params.email !== req.decoded.email) {
-                return res.status(403).send({ message: 'forbidden access' });
-            }
-            const result = await paymentCollection.find(query).toArray();
-            res.send(result);
-        });
-
-        app.get('/services', async (req, res) => {
-            const result = await serviceCollection.find().toArray();
-            res.send(result);
-        });
-
-        app.get('/services/:id', async (req, res) => {
-            const id = req.params.id;
-            const query = { _id: new ObjectId(id) };
-            const result = await serviceCollection.findOne(query);
-            res.send(result);
-        });
-
-        app.post('/services', verifyToken, verifyAdmin, async (req, res) => {
-            const item = req.body;
-            const result = await serviceCollection.insertOne(item);
-            res.send(result);
-        });
-
-        app.delete('/services/:id', verifyToken, verifyAdmin, async (req, res) => {
-            const id = req.params.id;
-            const query = { _id: new ObjectId(id) };
-            const result = await serviceCollection.deleteOne(query);
-            res.send(result);
-        });
-
         app.post('/users', async (req, res) => {
             const user = req.body;
             const query = { email: user.email };
@@ -197,9 +131,28 @@ async function run() {
             res.send(result);
         });
 
-        app.post('/bookings', async (req, res) => {
-            const booking = req.body;
-            const result = await bookingCollection.insertOne(booking);
+        app.get('/services', async (req, res) => {
+            const result = await serviceCollection.find().toArray();
+            res.send(result);
+        });
+
+        app.get('/services/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await serviceCollection.findOne(query);
+            res.send(result);
+        });
+
+        app.post('/services', verifyToken, verifyAdmin, async (req, res) => {
+            const item = req.body;
+            const result = await serviceCollection.insertOne(item);
+            res.send(result);
+        });
+
+        app.delete('/services/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await serviceCollection.deleteOne(query);
             res.send(result);
         });
 
@@ -209,6 +162,12 @@ async function run() {
                 query = { userEmail: req.query.email }
             }
             const result = await bookingCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        app.post('/bookings', async (req, res) => {
+            const booking = req.body;
+            const result = await bookingCollection.insertOne(booking);
             res.send(result);
         });
 
@@ -231,6 +190,85 @@ async function run() {
             };
             const result = await bookingCollection.updateOne(filter, updatedDoc);
             res.send(result);
+        });
+
+        app.post('/create-payment-intent', verifyToken, async (req, res) => {
+            const { price } = req.body;
+            const amount = parseInt(price * 100);
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: amount,
+                currency: 'usd',
+                payment_method_types: ['card']
+            });
+            res.send({ clientSecret: paymentIntent.client_secret });
+        });
+
+        app.post('/payments', verifyToken, async (req, res) => {
+            const payment = req.body;
+            const insertResult = await paymentCollection.insertOne(payment);
+            const query = { _id: new ObjectId(payment.bookingId) };
+            const updatedDoc = {
+                $set: {
+                    paymentStatus: 'paid',
+                    transactionId: payment.transactionId,
+                    status: 'confirmed'
+                }
+            }
+            const updateResult = await bookingCollection.updateOne(query, updatedDoc);
+            res.send({ insertResult, updateResult });
+        });
+
+        app.get('/payments/:email', verifyToken, async (req, res) => {
+            const query = { email: req.params.email };
+            if (req.params.email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            const result = await paymentCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
+            const users = await userCollection.estimatedDocumentCount();
+            const services = await serviceCollection.estimatedDocumentCount();
+            const bookings = await bookingCollection.estimatedDocumentCount();
+
+            const payments = await paymentCollection.find().toArray();
+            const revenue = payments.reduce((total, payment) => total + payment.price, 0);
+
+            const serviceStats = await bookingCollection.aggregate([
+                {
+                    $lookup: {
+                        from: 'services',
+                        localField: 'serviceId',
+                        foreignField: '_id',
+                        as: 'serviceData'
+                    }
+                },
+                {
+                    $unwind: '$serviceData'
+                },
+                {
+                    $group: {
+                        _id: '$serviceData.category',
+                        count: { $sum: 1 }
+                    }
+                },
+                {
+                    $project: {
+                        category: '$_id',
+                        count: 1,
+                        _id: 0
+                    }
+                }
+            ]).toArray();
+
+            res.send({
+                users,
+                services,
+                bookings,
+                revenue,
+                serviceStats
+            });
         });
 
         await client.db("admin").command({ ping: 1 });
