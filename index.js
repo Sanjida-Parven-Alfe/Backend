@@ -228,47 +228,62 @@ async function run() {
         });
 
         app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
-            const users = await userCollection.estimatedDocumentCount();
-            const services = await serviceCollection.estimatedDocumentCount();
-            const bookings = await bookingCollection.estimatedDocumentCount();
+            try {
+                const users = await userCollection.estimatedDocumentCount();
+                const services = await serviceCollection.estimatedDocumentCount();
+                const bookings = await bookingCollection.estimatedDocumentCount();
 
-            const payments = await paymentCollection.find().toArray();
-            const revenue = payments.reduce((total, payment) => total + payment.price, 0);
+                const payments = await paymentCollection.find().toArray();
+                const revenue = payments.reduce((total, payment) => total + (payment.price || 0), 0);
 
-            const serviceStats = await bookingCollection.aggregate([
-                {
-                    $lookup: {
-                        from: 'services',
-                        localField: 'serviceId',
-                        foreignField: '_id',
-                        as: 'serviceData'
+                const serviceStats = await bookingCollection.aggregate([
+                    {
+                        $match: {
+                            serviceId: { $exists: true, $type: "string", $regex: /^[0-9a-fA-F]{24}$/ }
+                        }
+                    },
+                    {
+                        $addFields: {
+                            serviceObjectId: { $toObjectId: "$serviceId" }
+                        }
+                    },
+                    {
+                        $lookup: {
+                            from: 'services',
+                            localField: 'serviceObjectId',
+                            foreignField: '_id',
+                            as: 'serviceData'
+                        }
+                    },
+                    {
+                        $unwind: '$serviceData'
+                    },
+                    {
+                        $group: {
+                            _id: '$serviceData.category',
+                            count: { $sum: 1 }
+                        }
+                    },
+                    {
+                        $project: {
+                            category: '$_id',
+                            count: 1,
+                            _id: 0
+                        }
                     }
-                },
-                {
-                    $unwind: '$serviceData'
-                },
-                {
-                    $group: {
-                        _id: '$serviceData.category',
-                        count: { $sum: 1 }
-                    }
-                },
-                {
-                    $project: {
-                        category: '$_id',
-                        count: 1,
-                        _id: 0
-                    }
-                }
-            ]).toArray();
+                ]).toArray();
 
-            res.send({
-                users,
-                services,
-                bookings,
-                revenue,
-                serviceStats
-            });
+                res.send({
+                    users,
+                    services,
+                    bookings,
+                    revenue,
+                    serviceStats
+                });
+            } catch (error) {
+                console.error("Admin Stats Error:", error);
+                res.status(500).send({ message: "Internal Server Error in Stats" });
+            }
         });
 
         await client.db("admin").command({ ping: 1 });
